@@ -13,9 +13,6 @@ SensorData sensor_data = {
     .last_update_ms = 0
 };
 
-// ============ BUFFER ADC ============
-static uint16_t adc_buffer[5] = {0};  // PA0, PA1, PA2, PA3, PA4
-
 // ============ INICIALIZAÇÃO ============
 void Sensors_Init(void) {
     // ADC1 já inicializado em ADC_Init() (STM32_specific.c)

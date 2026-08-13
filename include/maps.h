@@ -6,7 +6,7 @@
 // ============ ESTRUTURAS ============
 typedef struct {
     uint16_t rpm_bins[8];      // RPM: 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000
-    uint8_t load_bins[8];      // Load%: 0, 12.5, 25, 37.5, 50, 62.5, 75, 87.5, 100
+    uint8_t load_bins[8];      // Load%:0, 12, 25, 40, 55, 70, 85, 100
     uint8_t table[8][8];       // Valores interpoláveis
 } MapTable;
 
