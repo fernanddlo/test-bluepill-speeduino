@@ -1,5 +1,6 @@
 #include "STM32_specific.h"
 #include "config.h"
+#include "trigger.h"
 
 #include <stdint.h>
 
@@ -1173,16 +1174,10 @@ void HAL_TIM_IC_CaptureCallback(
         htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3
     )
     {
-        /*
-         * O módulo trigger/RPM consumirá
-         * posteriormente este evento.
-         *
-         * Mantemos a interface desacoplada
-         * nesta etapa.
+                /*
+         * Encaminha a captura do TIM1_CH3 para
+         * o módulo trigger/RPM.
          */
-
-        extern void RPM_CAS_ISR(void);
-
         RPM_CAS_ISR();
     }
 }

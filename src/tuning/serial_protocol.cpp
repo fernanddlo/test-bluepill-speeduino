@@ -1,7 +1,7 @@
 #include "serial_protocol.h"
 #include "config.h"
 #include "STM32_specific.h"
-#include "rpm.h"
+#include "trigger.h"
 #include "injection.h"
 #include "sensors.h"
 #include "eeprom.h"

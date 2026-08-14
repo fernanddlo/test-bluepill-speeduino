@@ -1,43 +1,22 @@
 /**
  * @file main.cpp
- * @brief Speeduino-style ECU core - STM32F103C8T6
- *
- * V0.1
- *
- * Hardware:
- *   STM32F103C8T6
- *
- * Inputs:
- *   PA10 - RPM
- *   PA0  - TPS
- *   PA1  - MAP
- *   PA2  - IAT
- *   PA3  - CLT
- *   PA4  - O2
- *
- * Outputs:
- *   PA8  - INJ1
- *   PA9  - INJ2
- *   PA11 - IGN1
- *   PA12 - IGN2
- *   PB0  - Fuel Pump
- *
- * Communication:
- *   PB10 - USART3 TX
- *   PB11 - USART3 RX
+ * @brief ECU principal - STM32F103C8T6
  */
 
 #include "STM32_specific.h"
 #include "config.h"
 
-#include "rpm.h"
+#include "map.h"
+#include "trigger.h"
 #include "sensors.h"
 #include "fuel_pump.h"
 #include "injection.h"
+#include "ignition.h"
 #include "maps.h"
 #include "serial_protocol.h"
 
 #include <stdint.h>
+
 
 // ============================================================
 // GLOBAL ENGINE STATE
@@ -45,23 +24,26 @@
 
 volatile EngineState engine_state = ENGINE_OFF;
 
+
 // ============================================================
-// 100 Hz scheduler flag
+// 10 ms scheduler flag
 // ============================================================
 
 volatile uint8_t ecu_10ms_flag = 0;
 
+
 // ============================================================
-// APPLICATION INITIALIZATION
+// ECU INITIALIZATION
 // ============================================================
 
 static void ECU_Init(void)
 {
     // --------------------------------------------------------
-    // RPM
+    // Trigger / RPM
     // --------------------------------------------------------
 
     RPM_Init();
+
 
     // --------------------------------------------------------
     // Sensors
@@ -69,11 +51,13 @@ static void ECU_Init(void)
 
     Sensors_Init();
 
+
     // --------------------------------------------------------
     // Fuel pump
     // --------------------------------------------------------
 
     FuelPump_Init();
+
 
     // --------------------------------------------------------
     // Injection
@@ -81,18 +65,28 @@ static void ECU_Init(void)
 
     Injection_Init();
 
+
     // --------------------------------------------------------
-    // Maps
+    // Ignition
+    // --------------------------------------------------------
+
+    Ignition_Init();
+
+
+    // --------------------------------------------------------
+    // Serial / TunerStudio
     // --------------------------------------------------------
 
     Serial_Init();
 
+
     // --------------------------------------------------------
-    // Engine state
+    // Initial engine state
     // --------------------------------------------------------
 
     engine_state = ENGINE_OFF;
 }
+
 
 // ============================================================
 // 10 ms ENGINE TASK
@@ -101,15 +95,29 @@ static void ECU_Init(void)
 static void ECU_Task_10ms(void)
 {
     // --------------------------------------------------------
-    // RPM processing
+    // RPM / trigger
     // --------------------------------------------------------
 
     RPM_Process();
 
     uint32_t rpm = RPM_Get();
 
+
     // --------------------------------------------------------
-    // Sensor processing
+    // Sensors
+    // --------------------------------------------------------
+
+    Sensors_ReadAll();
+
+    float tps = Sensors_GetTPS();
+
+    float map_kpa = Sensors_GetMAP();
+
+    float load = MAP_ToLoad(map_kpa);
+
+
+    // --------------------------------------------------------
+    // Engine state
     // --------------------------------------------------------
 
     if (rpm == 0)
@@ -125,21 +133,60 @@ static void ECU_Task_10ms(void)
         engine_state = ENGINE_RUNNING;
     }
 
+
     // --------------------------------------------------------
     // Fuel pump
     // --------------------------------------------------------
 
     FuelPump_Process(rpm);
 
-    Sensors_ReadAll();
 
-    float load = Sensors_GetMAP();
+    // --------------------------------------------------------
+    // Injection
+    // --------------------------------------------------------
 
-    Injection_Process(
-        rpm,
-        load
-    );
+    if (engine_state == ENGINE_RUNNING)
+    {
+        if (!Injection_IsEnabled())
+        {
+            Injection_Enable();
+        }
+
+        Injection_Process(
+            rpm,
+            load
+        );
+    }
+    else
+    {
+        Injection_Disable();
+    }
+
+
+    // --------------------------------------------------------
+    // Ignition
+    // --------------------------------------------------------
+
+    if (engine_state == ENGINE_RUNNING)
+    {
+        Ignition_Process(
+            rpm,
+            load
+        );
+    }
+    else
+    {
+        Ignition_Disable();
+    }
+
+
+    // --------------------------------------------------------
+    // Evita warning temporário
+    // --------------------------------------------------------
+
+    (void)tps;
 }
+
 
 // ============================================================
 // MAIN
@@ -153,11 +200,13 @@ int main(void)
 
     STM32_Init();
 
+
     // --------------------------------------------------------
     // ECU modules
     // --------------------------------------------------------
 
     ECU_Init();
+
 
     // --------------------------------------------------------
     // Main loop
