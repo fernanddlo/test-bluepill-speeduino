@@ -4,8 +4,8 @@
 
 #include "stm32f1xx_hal.h"
 #include <stdint.h>
-
 #include "config.h"
+#include "trigger.h"
 
 
 #ifdef __cplusplus

@@ -54,6 +54,7 @@
  * nesta primeira implementação.
  */
 #define CAS_PULSES_PER_ROTATION          2
+//#define TRIGGER_PULSES_PER_CRANK_REV 2
 
 #define CAS_INPUT_PIN                    PA10
 

@@ -1163,12 +1163,6 @@ void HAL_TIM_IC_CaptureCallback(
     TIM_HandleTypeDef *htim
 )
 {
-    /*
-     * TIM1 CH3
-     *
-     * RPM / Trigger
-     */
-
     if (
         htim->Instance == TIM1 &&
         htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3

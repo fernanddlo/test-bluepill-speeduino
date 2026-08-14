@@ -8,18 +8,27 @@ extern "C" {
 #endif
 
 // ============================================================
-// RPM DATA
+// RPM / TRIGGER STATE
 // ============================================================
 
 typedef struct
 {
+    // RPM calculado
     volatile uint32_t rpm;
+
+    // Frequência bruta dos pulsos
     volatile uint32_t raw_frequency;
 
+    // Timestamp do último pulso em ms
     volatile uint32_t last_pulse_time;
 
+    // Estado:
+    // 0 = sem sinal
+    // 1 = sinal válido
+    // 2 = erro
     volatile uint8_t state;
 
+    // Contadores de diagnóstico
     volatile uint32_t pulse_count;
     volatile uint32_t error_count;
 
@@ -41,9 +50,13 @@ void RPM_Init(void);
 
 
 // ============================================================
-// INTERRUPT
+// INTERRUPT SERVICE
 // ============================================================
 
+/*
+ * Chamado pelo HAL quando ocorre uma captura
+ * no TIM1_CH3.
+ */
 void RPM_CAS_ISR(void);
 
 
@@ -51,6 +64,13 @@ void RPM_CAS_ISR(void);
 // BACKGROUND PROCESSING
 // ============================================================
 
+/*
+ * Deve ser chamado no loop principal.
+ *
+ * Responsável principalmente por:
+ * - timeout de sinal
+ * - estado do trigger
+ */
 void RPM_Process(void);
 
 
