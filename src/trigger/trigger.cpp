@@ -24,38 +24,43 @@ RPM_Data rpm_data =
 // ============================================================
 
 /*
- * Timestamp estendido do último pulso.
+ * Timestamp estendido da última captura.
  *
- * TIM1 é 16-bit e trabalha a 1 MHz.
+ * TIM1:
+ *
+ * 16 bits
+ * 1 MHz
  *
  * Portanto:
  *
- * 65536 ticks = 65.536 ms
+ * 0xFFFF = 65.535 ms
  *
- * O contador de overflow do TIM1 transforma isso
- * em um timestamp efetivamente de 32 bits.
+ * O contador tim1_overflow_count transforma
+ * o timestamp em aproximadamente 32 bits.
  */
 static volatile uint32_t last_capture_extended = 0;
 
 
 /*
- * Indica que ainda não recebemos duas capturas
- * consecutivas suficientes para calcular RPM.
+ * Indica que ainda não existe uma captura anterior
+ * para calcular o período.
  */
 static volatile uint8_t first_capture = 1;
 
 
 // ============================================================
-// HELPER - GET EXTENDED CAPTURE TIME
+// EXTENDED TIMESTAMP
 // ============================================================
 
 static uint32_t RPM_GetExtendedCapture(void)
 {
     uint32_t overflow_count;
     uint32_t capture_value;
+    uint32_t counter_value;
 
     /*
-     * CCR3 contém o valor capturado pelo TIM1_CH3.
+     * CCR3 contém o valor congelado no instante
+     * da captura.
      */
     capture_value =
         HAL_TIM_ReadCapturedValue(
@@ -64,41 +69,61 @@ static uint32_t RPM_GetExtendedCapture(void)
         );
 
     /*
-     * Contador de overflow mantido pelo callback
-     * HAL_TIM_PeriodElapsedCallback().
+     * Lê o contador atual.
+     *
+     * Ele será usado para resolver o caso em que
+     * o overflow aconteceu praticamente junto
+     * com a captura.
      */
-    overflow_count = tim1_overflow_count;
+    counter_value =
+        __HAL_TIM_GET_COUNTER(&htim1);
 
     /*
-     * Condição especial:
+     * Copia o contador de overflow.
+     */
+    overflow_count =
+        tim1_overflow_count;
+
+    /*
+     * ========================================================
+     * OVERFLOW PENDENTE
+     * ========================================================
      *
-     * Pode ocorrer um overflow entre o momento da captura
-     * e a execução da ISR de captura.
+     * É possível que:
      *
-     * Se o flag de update estiver pendente e o valor capturado
-     * estiver próximo do início do contador, consideramos que
-     * essa captura pertence ao próximo ciclo.
+     * 1. o timer tenha dado overflow;
+     * 2. a captura tenha ocorrido;
+     * 3. o callback de UPDATE ainda não tenha sido executado.
+     *
+     * Neste caso o flag UPDATE permanece ativo.
+     *
+     * Se:
+     *
+     * capture < counter
+     *
+     * a captura ocorreu depois do overflow.
+     *
+     * Portanto precisamos adicionar um overflow.
      */
     if (
         __HAL_TIM_GET_FLAG(
             &htim1,
             TIM_FLAG_UPDATE
         ) != RESET
-        &&
-        capture_value < 0x8000UL
     )
     {
-        overflow_count++;
+        if (capture_value < counter_value)
+        {
+            overflow_count++;
+        }
     }
 
     /*
-     * Junta:
+     * Timestamp estendido:
      *
-     * overflow << 16
-     *
+     * overflow_count * 65536
      * +
-     *
-     * valor de captura
+     * capture_value
      */
     return
         (overflow_count << 16)
@@ -114,9 +139,8 @@ static uint32_t RPM_GetExtendedCapture(void)
 void RPM_Init(void)
 {
     /*
-     * TIM1_CH3 já é configurado em Timer_Init().
+     * Limpa dados públicos.
      */
-
     rpm_data.rpm = 0;
     rpm_data.raw_frequency = 0;
     rpm_data.last_pulse_time = 0;
@@ -126,11 +150,14 @@ void RPM_Init(void)
     rpm_data.pulse_count = 0;
     rpm_data.error_count = 0;
 
+    /*
+     * Limpa estado interno.
+     */
     last_capture_extended = 0;
     first_capture = 1;
 
     /*
-     * Garante que o contador de overflow comece zerado.
+     * Reinicia extensão de overflow.
      */
     tim1_overflow_count = 0;
 }
@@ -144,21 +171,22 @@ void RPM_CAS_ISR(void)
 {
     uint32_t capture_extended;
     uint32_t period_us;
-    uint32_t frequency_hz;
+
+    uint64_t frequency_hz;
     uint64_t rpm_calculated;
 
 
-    // --------------------------------------------------------
-    // Lê timestamp estendido
-    // --------------------------------------------------------
+    // ========================================================
+    // READ CAPTURE
+    // ========================================================
 
     capture_extended =
         RPM_GetExtendedCapture();
 
 
-    // --------------------------------------------------------
-    // Primeira captura
-    // --------------------------------------------------------
+    // ========================================================
+    // FIRST CAPTURE
+    // ========================================================
 
     if (first_capture)
     {
@@ -173,31 +201,29 @@ void RPM_CAS_ISR(void)
     }
 
 
-    // --------------------------------------------------------
-    // Calcula período
-    // --------------------------------------------------------
+    // ========================================================
+    // PERIOD
+    // ========================================================
 
     period_us =
         capture_extended -
         last_capture_extended;
 
-
     last_capture_extended =
         capture_extended;
 
 
-    // --------------------------------------------------------
-    // Validação
-    // --------------------------------------------------------
+    // ========================================================
+    // VALIDATION
+    // ========================================================
 
     /*
-     * Ignora pulsos impossivelmente rápidos.
+     * Pulso rápido demais.
      *
-     * 100 us = 600.000 pulsos/min.
-     *
-     * Muito acima do necessário para o motor.
+     * Isso normalmente indica ruído ou uma configuração
+     * incorreta do trigger.
      */
-    if (period_us < 100)
+    if (period_us < RPM_MIN_PERIOD_US)
     {
         rpm_data.error_count++;
 
@@ -208,18 +234,16 @@ void RPM_CAS_ISR(void)
 
 
     /*
-     * Timeout máximo físico utilizado para validar
-     * um intervalo individual.
+     * Período extremamente longo.
      *
-     * 1 segundo permite velocidades extremamente baixas,
-     * mas ainda evita aceitar sinal travado.
+     * O RPM será tratado como perdido pelo timeout
+     * de RPM_Process().
      */
-    if (period_us > 1000000UL)
+    if (period_us > RPM_MAX_PERIOD_US)
     {
         rpm_data.error_count++;
 
         rpm_data.rpm = 0;
-
         rpm_data.raw_frequency = 0;
 
         rpm_data.state = 2;
@@ -228,61 +252,83 @@ void RPM_CAS_ISR(void)
     }
 
 
-    // --------------------------------------------------------
-    // Frequência
-    // --------------------------------------------------------
+    // ========================================================
+    // FREQUENCY
+    // ========================================================
 
     /*
-     * Frequência em Hz:
+     * Frequência:
      *
-     * 1.000.000 / período_us
+     * F = timer_frequency / period
      *
-     * Aqui usamos uint64 para evitar overflow
-     * e manter precisão.
+     * Com:
+     *
+     * timer = 1 MHz
+     * period = us
      */
     frequency_hz =
-        (uint32_t)(
-            1000000ULL /
-            period_us
-        );
+        (
+            (uint64_t)RPM_TIMER_TICK_HZ
+        )
+        /
+        period_us;
 
 
     rpm_data.raw_frequency =
-        frequency_hz;
+        (uint32_t)frequency_hz;
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // RPM
-    // --------------------------------------------------------
+    // ========================================================
 
     /*
      * RPM:
      *
      * RPM =
      *
-     * 60.000.000
-     * -----------------------------
-     * período_us * pulsos_por_rotação
+     * timer_tick_hz * 60
+     * -------------------------
+     * period_us * pulses_per_rev
      *
      *
-     * Usamos diretamente o período em vez de:
+     * Exemplo:
      *
-     * frequência -> divisão inteira -> RPM
+     * timer = 1.000.000 Hz
+     * período = 10.000 us
+     * 2 pulsos/rotação
      *
-     * Isso preserva mais precisão.
+     * RPM =
+     *
+     * 1.000.000 * 60
+     * ----------------
+     * 10.000 * 2
+     *
+     * = 3.000 RPM
      */
-
     rpm_calculated =
-        60000000ULL /
+        (
+            (uint64_t)RPM_TIMER_TICK_HZ *
+            60ULL
+        )
+        /
         (
             (uint64_t)period_us *
             (uint64_t)CAS_PULSES_PER_ROTATION
         );
 
 
-    if (rpm_calculated > 100000UL)
+    // ========================================================
+    // SAFETY LIMIT
+    // ========================================================
+
+    if (
+        rpm_calculated >
+        RPM_MAX_VALID
+    )
     {
-        rpm_calculated = 100000UL;
+        rpm_calculated =
+            RPM_MAX_VALID;
     }
 
 
@@ -290,17 +336,17 @@ void RPM_CAS_ISR(void)
         (uint32_t)rpm_calculated;
 
 
-    // --------------------------------------------------------
-    // Timestamp
-    // --------------------------------------------------------
+    // ========================================================
+    // TIMESTAMP
+    // ========================================================
 
     rpm_data.last_pulse_time =
         HAL_GetTick();
 
 
-    // --------------------------------------------------------
-    // Estado
-    // --------------------------------------------------------
+    // ========================================================
+    // STATE
+    // ========================================================
 
     rpm_data.state = 1;
 
@@ -322,13 +368,15 @@ void RPM_Process(void)
         HAL_GetTick();
 
 
-    /*
-     * Nunca recebemos pulso ainda.
-     */
-    if (rpm_data.last_pulse_time == 0)
+    // ========================================================
+    // NO PULSE YET
+    // ========================================================
+
+    if (
+        rpm_data.last_pulse_time == 0
+    )
     {
         rpm_data.rpm = 0;
-
         rpm_data.raw_frequency = 0;
 
         rpm_data.state = 0;
@@ -337,9 +385,10 @@ void RPM_Process(void)
     }
 
 
-    /*
-     * Detecta perda de sinal.
-     */
+    // ========================================================
+    // SIGNAL TIMEOUT
+    // ========================================================
+
     elapsed_ms =
         now_ms -
         rpm_data.last_pulse_time;
@@ -351,7 +400,6 @@ void RPM_Process(void)
     )
     {
         rpm_data.rpm = 0;
-
         rpm_data.raw_frequency = 0;
 
         rpm_data.state = 0;

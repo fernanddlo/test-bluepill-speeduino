@@ -54,9 +54,54 @@
  * nesta primeira implementação.
  */
 #define CAS_PULSES_PER_ROTATION          2
+#define CAS_INPUT_PIN                    PA10
 //#define TRIGGER_PULSES_PER_CRANK_REV 2
 
-#define CAS_INPUT_PIN                    PA10
+/*
+ * ============================================================
+ * RPM VALIDATION
+ * ============================================================
+ *
+ * TIM1 trabalha com resolução de 1 us.
+ *
+ * RPM mínima não é usada para rejeitar captura.
+ * Ela é usada pelo restante da ECU para determinar
+ * se o motor está funcionando.
+ */
+
+/*
+ * Menor período de pulso aceito.
+ *
+ * 100 us com 2 pulsos/volta:
+ *
+ * RPM = 60.000.000 / (100 * 2)
+ *     = 300.000 RPM
+ *
+ * Portanto este limite está muito acima da faixa
+ * física esperada e serve apenas para rejeitar ruído.
+ */
+#define RPM_MIN_PERIOD_US                100UL
+
+/*
+ * Maior período individual aceito.
+ *
+ * 1 segundo permite:
+ *
+ * RPM = 60.000.000 / (1.000.000 * 2)
+ *     = 30 RPM
+ *
+ * Portanto sinais abaixo disso não são considerados
+ * uma medição válida.
+ */
+#define RPM_MAX_PERIOD_US                1000000UL
+
+/*
+ * Limite superior de RPM calculado.
+ *
+ * É uma proteção adicional contra valores absurdos
+ * provocados por ruído ou falha de hardware.
+ */
+#define RPM_MAX_VALID                    100000UL
 
 #define MIN_RPM_FOR_RUNNING              500
 #define RPM_NO_SIGNAL_TIMEOUT_MS         1000
