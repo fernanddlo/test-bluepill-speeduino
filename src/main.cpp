@@ -131,16 +131,13 @@ static void ECU_Task_10ms(void)
 
     FuelPump_Process(rpm);
 
-    // --------------------------------------------------------
-    // Injection
-    //
-    // For V0.1 the injection module is not yet allowed to
-    // drive physical injectors automatically.
-    // --------------------------------------------------------
+    Sensors_ReadAll();
+
+    float load = Sensors_GetMAP();
 
     Injection_Process(
-        engine_state,
-        rpm
+        rpm,
+        load
     );
 }
 
